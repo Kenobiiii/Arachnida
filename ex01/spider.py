@@ -13,8 +13,8 @@ HEADERS = {
 
 VALID_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
 
-def download_html(url: str) -> str | None:
-    #the url is a str, and the func will return either an str or a None
+def download_html(url: str) -> tuple[str, str] | None:
+    #the url is a str, and the func will return either a tuple (html, final url after redirects) or a None
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
         # if the url didn't start with http/s the request library gives error
@@ -22,7 +22,8 @@ def download_html(url: str) -> str | None:
         response = requests.get(url, headers=HEADERS, timeout=5.0)
         # we add the timeout in order to avoid the script getting frozen because of a url not answering
         if response.status_code == 200:
-            return response.text
+            # response.url is the url we ended in after following the redirects
+            return response.text, response.url
         # status_code 200 in html means OK, 404: not found, 403: forbidden, 500: internal error
         else:
             print(f"[❌] Error HTTP {response.status_code} when accessing into: {url}")
@@ -42,7 +43,7 @@ def download_html(url: str) -> str | None:
                 response = requests.get(url_http, headers=HEADERS, timeout=5.0)
                 if response.status_code == 200:
                     print(f"[✅] successful conection using http to: {url_http}")
-                    return response.text
+                    return response.text, response.url
                 return None
             except requests.exceptions.RequestException as e:
                 print(f"[❌] Error trying to connect with http to: {url}, error: {e}")
@@ -74,8 +75,8 @@ def extract_images_from_url(html_content: str, base_url: str) -> set[str]:
         # 4. we transform the relative url into the absolute using urljoin
         absolute_url = urljoin(base_url, src)
 
-        # we check if the url end in a valid extension
-        if absolute_url.lower().endswith(VALID_EXTENSIONS):
+        # we check if the url end in a valid extension (only the path, so foto.jpg?width=300 is valid too)
+        if urlparse(absolute_url).path.lower().endswith(VALID_EXTENSIONS):
             images_url.add(absolute_url)
     return images_url
 
@@ -124,9 +125,13 @@ def download_img(image_url: str, destination_path: Path):
     except OSError as e:
         print(f"[❌] Error in disk writing for {file_name}: {e}")
 
-def spider_bfs(start_url: str, max_level: int, visited_urls: set[str], output_dir: Path, base_domain: str):
+def spider_bfs(start_url: str, max_level: int, visited_urls: set[str], output_dir: Path):
     # BFS: we use a queue of (url, level) so we crawl level by level
     queue = deque([(start_url, 0)])
+    # urls of the images already downloaded, so we don't download the same one twice
+    downloaded_images = set()
+    # it's set with the final url of the first page (after redirects)
+    base_domain = None
 
     while queue:
         # popleft takes the OLDEST element -> lower levels go first
@@ -137,16 +142,30 @@ def spider_bfs(start_url: str, max_level: int, visited_urls: set[str], output_di
         print(f"[❕] [Level {current_level}/{max_level}] Crawling: {current_url}")
         visited_urls.add(current_url)
 
-        html_content = download_html(current_url)
-        if not html_content:
+        result = download_html(current_url)
+        if not result:
             continue
-        image_urls = extract_images_from_url(html_content, current_url)
+        html_content, final_url = result
+
+        # if it redirected to a page we already crawled, skip it
+        if final_url != current_url and final_url in visited_urls:
+            continue
+        visited_urls.add(final_url)
+
+        # the base domain is taken from the FINAL url of the first page (example.com -> www.example.com)
+        if base_domain is None:
+            base_domain = urlparse(final_url).netloc
+
+        image_urls = extract_images_from_url(html_content, final_url)
         print(f"[✅] Found {len(image_urls)} valid images at this level")
 
         for img_url in image_urls:
+            if img_url in downloaded_images:
+                continue
+            downloaded_images.add(img_url)
             download_img(img_url, output_dir)
         if current_level < max_level:
-            child_links = extract_page_links(html_content, current_url, base_domain)
+            child_links = extract_page_links(html_content, final_url, base_domain)
             for link in child_links:
                 if link not in visited_urls:
                     # append adds at the END of the queue
@@ -165,9 +184,8 @@ def main():
     directory = Path(args.path)
     directory.mkdir(parents=True, exist_ok=True)
 
-    # 3. Normalize URL and get base domain
+    # 3. Normalize URL (the base domain is calculated inside spider_bfs, after redirects)
     initial_url = args.url if args.url.startswith(("http://", "https://")) else "https://" + args.url
-    base_domain = urlparse(initial_url).netloc
 
     # 4. Recursive level (0 if -r is not used)
     max_level = args.level if args.recursive else 0
@@ -175,7 +193,7 @@ def main():
 
     # 5. Start crawling
     print(f"[⌛] Starting spider on: {initial_url} | Max depth: {max_level}")
-    spider_bfs(initial_url, max_level, visited_urls, directory, base_domain)
+    spider_bfs(initial_url, max_level, visited_urls, directory)
     print(f"[✅] Finished. Pages visited: {len(visited_urls)}")
 
 
