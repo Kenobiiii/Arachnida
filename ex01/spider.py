@@ -1,6 +1,33 @@
 import argparse
-from pathlib import Path
 import requests
+from pathlib import Path
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+
+def extract_images_from_url(html_content: str, base_url: str) set[str]:
+    valid_extentions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+
+    images_url = set()
+
+    # 1. We create a BeautifulSoup object in order to parse
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # 2. We search for all <img> labels
+    img_label = soup.find_all('img')
+    print(f"[❕] we found {len(img_label)} <img> labels")
+
+    # 3. We parse each img label
+    for img in img_label:
+        # we extract the src attribute
+        src = img.get('src')
+        if not src:
+            continue
+        # 4. we transform the relative url into the absolute using urljoin
+        absolute_url = urljoin(base_url, src)
+
+        # we check if the url end in a valid extension
+        if absolute_url.lower().endswith(valid_extentions):
+            images_url.add(absolute_url)
+    return images_url
 
 def dowload_html(url: str) -> str | None:
     #the url is a str, and the func will return either an str or a None
@@ -32,7 +59,7 @@ def dowload_html(url: str) -> str | None:
                     print(f"[✅] successful conection using http to: {url_http}")
                     return response.text
             except requests.exceptions.RequestException as e:
-                print(f"[❌] Error trying to connect with http to: {url}")
+                print(f"[❌] Error trying to connect with http to: {url}, error: {e}")
                 return None
         else:
             print(f"[❌] Error trying to connect with: {url}")
@@ -44,7 +71,7 @@ def dowload_html(url: str) -> str | None:
     
     except requests.exceptions.RequestException as e:
         # Invalid catch (Invalid URL, no contection, etc)
-        print(f"[❌] Error trying to connect with: {url}")
+        print(f"[❌] Error trying to connect with: {url}, error: {e}")
         return None
 
 def main():
