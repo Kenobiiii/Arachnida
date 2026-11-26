@@ -1,4 +1,5 @@
 import argparse
+from collections import deque
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -123,25 +124,33 @@ def download_img(image_url: str, destination_path: Path):
     except OSError as e:
         print(f"[❌] Error in disk writing for {file_name}: {e}")
 
-def recursive_spider(current_url: str, current_level: int, max_level: int, visited_urls: set[str], output_dir: Path, base_domain: str):
-    if current_level > max_level or current_url in visited_urls:
-        return
+def spider_bfs(start_url: str, max_level: int, visited_urls: set[str], output_dir: Path, base_domain: str):
+    # BFS: we use a queue of (url, level) so we crawl level by level
+    queue = deque([(start_url, 0)])
 
-    print(f"[❕] [Level {current_level}/{max_level}] Crawling: {current_url}")
-    visited_urls.add(current_url)
+    while queue:
+        # popleft takes the OLDEST element -> lower levels go first
+        current_url, current_level = queue.popleft()
+        if current_url in visited_urls:
+            continue
 
-    html_content = download_html(current_url)
-    if not html_content:
-        return
-    image_urls = extract_images_from_url(html_content, current_url)
-    print(f"[✅] Found {len(image_urls)} valid images at this level")
+        print(f"[❕] [Level {current_level}/{max_level}] Crawling: {current_url}")
+        visited_urls.add(current_url)
 
-    for img_url in image_urls:
-        download_img(img_url, output_dir)
-    if current_level < max_level:
-        child_links = extract_page_links(html_content, current_url, base_domain)
-        for link in child_links:
-            recursive_spider(current_url=link, current_level=current_level + 1, max_level=max_level, visited_urls=visited_urls, output_dir=output_dir, base_domain=base_domain)
+        html_content = download_html(current_url)
+        if not html_content:
+            continue
+        image_urls = extract_images_from_url(html_content, current_url)
+        print(f"[✅] Found {len(image_urls)} valid images at this level")
+
+        for img_url in image_urls:
+            download_img(img_url, output_dir)
+        if current_level < max_level:
+            child_links = extract_page_links(html_content, current_url, base_domain)
+            for link in child_links:
+                if link not in visited_urls:
+                    # append adds at the END of the queue
+                    queue.append((link, current_level + 1))
 
 def main():
     # 1. Analice arguments
@@ -166,7 +175,7 @@ def main():
 
     # 5. Start crawling
     print(f"[⌛] Starting spider on: {initial_url} | Max depth: {max_level}")
-    recursive_spider(initial_url, 0, max_level, visited_urls, directory, base_domain)
+    spider_bfs(initial_url, max_level, visited_urls, directory, base_domain)
     print(f"[✅] Finished. Pages visited: {len(visited_urls)}")
 
 
