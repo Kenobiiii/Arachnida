@@ -2,9 +2,42 @@ import argparse
 import requests
 from pathlib import Path
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
-def extract_images_from_url(html_content: str, base_url: str) set[str]:
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
+}
+# we add a User-Agent in order to avoid the anti-bots blockades
+
+def dowload_img(image_url: str, destination_path: Path):
+    try:
+        # 1. we get the name for the file from the url
+        file_name = Path(urlparse(image_url).path).name
+
+        # if invalid name
+        if not file_name:
+            print(f"[❌] Invalid name for: {image_url}")
+            return
+
+        # 2. we keep the path to the directory
+        file_path = destination_path / file_name
+
+        # 3. http get to the img
+        response = requests.get(image_url, headers=HEADERS, timeout=10.0)
+        if response.status_code == 200:
+            # 4. we write the bytes in binary writing (wb)
+            with open(file_path, 'wb') as file:
+                file.write(response.content)
+                print(f"[✅] Dowloaded: {file_name} -> {file_path}")
+        else:
+            print(f"[❌] HTTP error {response.status_code} when downloading:  {image_url}")
+    
+    except requests.exceptions.RequestException as e:
+        print(f"[❌] Error downloading {image_url}: {e}")
+    except OSError as e:
+        print(f"[❌] Error in disk writing for {file_name}: {e}")
+
+def extract_images_from_url(html_content: str, base_url: str) -> set[str]:
     valid_extentions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
 
     images_url = set()
@@ -31,16 +64,11 @@ def extract_images_from_url(html_content: str, base_url: str) set[str]:
 
 def dowload_html(url: str) -> str | None:
     #the url is a str, and the func will return either an str or a None
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
-    }
-    # we add a User-Agent in order to avoid the anti-bots blockades
-    
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
         # if the url didn't start with http/s the request library gives error 
     try:
-        response = requests.get(url, headers=headers, timeout=5.0)
+        response = requests.get(url, headers=HEADERS, timeout=5.0)
         # we add the timeout in order to avoid the script getting frozen because of a url not answering
         if response.status_code == 200:
             return response.text
@@ -54,7 +82,7 @@ def dowload_html(url: str) -> str | None:
             url_http = url.replace("https://", "http://", 1)
             print(f"[❗] https failed, retrying with http: {url_http}")
             try:
-                response = requests.get(url_http, headers=headers, timeout=5.0)
+                response = requests.get(url_http, headers=HEADERS, timeout=5.0)
                 if response.status_code == 200:
                     print(f"[✅] successful conection using http to: {url_http}")
                     return response.text
@@ -88,11 +116,21 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
 
     # 3. Dowload HTML
-    print(f"url used {args.url}")
     html_content = dowload_html(args.url)
+    if not html_content:
+        return
+    print(f"[✅]HTML dowloaded successful")
 
-    if html_content:
-        print(f"[✅]HTML dowloaded successful")
+    # 4. Extract img urls
+    print(f"[⌛] analizing images...")
+    found_img = extract_images_from_url(html_content, args.url)
+    print(f"[✅] Extracted images")
+    for url_img in found_img:
+        print(f" -> {url_img}")
+    # 5. Dowload each image
+    for url_img in found_img:
+        dowload_img(url_img, directory)
+
 
 if __name__ == "__main__":
     main()
